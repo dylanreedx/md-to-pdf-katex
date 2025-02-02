@@ -1,17 +1,16 @@
 import fs from 'fs/promises';
 import path from 'path';
+import {exec} from 'child_process';
 import MarkdownIt from 'markdown-it';
 import mdKatex from '@iktakahiro/markdown-it-katex';
 import puppeteer from 'puppeteer';
 
-// Initialize markdown-it with options
 const md = new MarkdownIt({
   html: true,
   breaks: true,
   typographer: true,
 });
 
-// Add KaTeX support
 md.use(mdKatex, {
   throwOnError: false,
   errorColor: '#cc0000',
@@ -19,10 +18,7 @@ md.use(mdKatex, {
 
 async function convertMarkdownToPDF(inputFile, outputFile) {
   try {
-    // Read the Markdown file
     const markdownContent = await fs.readFile(inputFile, 'utf-8');
-
-    // Convert Markdown to HTML
     const htmlContent = md.render(markdownContent);
 
     const fullHtml = `
@@ -40,34 +36,12 @@ async function convertMarkdownToPDF(inputFile, outputFile) {
               max-width: 210mm;
               margin: 0 auto;
             }
-            .katex { 
-              font-size: 1em !important; 
-            }
-            .katex-display { 
-              overflow-x: auto;
-              padding: 1rem 0;
-              margin: 1rem 0;
-            }
-            .katex-display > .katex { 
-              text-align: left; 
-              white-space: normal;
-            }
-            img {
-              max-width: 100%;
-              height: auto;
-              display: block;
-              margin: 1rem auto;
-            }
-            ol { 
-              padding-left: 2rem;
-              margin: 1rem 0;
-              counter-reset: list-counter;
-            }
-            ol > li {
-              margin: 1rem 0;
-              position: relative;
-              list-style: none;
-            }
+            .katex { font-size: 1em !important; }
+            .katex-display { overflow-x: auto; padding: 1rem 0; margin: 1rem 0; }
+            .katex-display > .katex { text-align: left; white-space: normal; }
+            img { max-width: 100%; height: auto; display: block; margin: 1rem auto; }
+            ol { padding-left: 2rem; margin: 1rem 0; counter-reset: list-counter; }
+            ol > li { margin: 1rem 0; position: relative; list-style: none; }
             ol > li:before {
               content: counter(list-counter) ".";
               counter-increment: list-counter;
@@ -77,10 +51,7 @@ async function convertMarkdownToPDF(inputFile, outputFile) {
               text-align: right;
             }
             p { margin: 0.5rem 0; }
-            .math-block {
-              margin: 1rem 0;
-              overflow-x: auto;
-            }
+            .math-block { margin: 1rem 0; overflow-x: auto; }
           </style>
         </head>
         <body>
@@ -91,18 +62,14 @@ async function convertMarkdownToPDF(inputFile, outputFile) {
 
     const browser = await puppeteer.launch();
     const page = await browser.newPage();
-
-    // Set content and wait for network and rendering to complete
     await page.setContent(fullHtml);
 
-    // Wait for KaTeX to load and render
+    // Wait for KaTeX to render
     await page.evaluate(() => {
-      return new Promise((resolve) => {
-        // Add a small delay to ensure KaTeX has time to render
-        setTimeout(resolve, 1000);
-      });
+      return new Promise((resolve) => setTimeout(resolve, 1000));
     });
 
+    // Generate the uncompressed PDF
     await page.pdf({
       path: outputFile,
       format: 'A4',
@@ -117,6 +84,30 @@ async function convertMarkdownToPDF(inputFile, outputFile) {
 
     await browser.close();
 
+    // Compress via Ghostscript after creation
+    const compressedFile = outputFile.replace(/\.pdf$/, '-compressed.pdf');
+    await new Promise((resolve, reject) => {
+      const cmd = [
+        'gs',
+        '-sDEVICE=pdfwrite',
+        '-dCompatibilityLevel=1.4',
+        '-dPDFSETTINGS=/screen',
+        '-dNOPAUSE',
+        '-dQUIET',
+        '-dBATCH',
+        `-sOutputFile="${compressedFile}"`,
+        `"${outputFile}"`,
+      ].join(' ');
+
+      exec(cmd, (error) => {
+        if (error) {
+          return reject(error);
+        }
+        console.log(`Compressed PDF created successfully: ${compressedFile}`);
+        resolve();
+      });
+    });
+
     console.log(`PDF created successfully: ${outputFile}`);
   } catch (error) {
     console.error('Error:', error);
@@ -125,7 +116,6 @@ async function convertMarkdownToPDF(inputFile, outputFile) {
 }
 
 const inputFile = process.argv[2];
-
 if (!inputFile) {
   console.error('Please provide a path to a Markdown file.');
   console.error('Usage: node markdown-to-pdf.js <input-file.md>');
